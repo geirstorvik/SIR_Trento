@@ -71,7 +71,7 @@ simSIR = function(x,bet,gam,h,N)
 ```{r SMC,echo=FALSE}
 #Population size
 npop = 5400000
-gamma = 0.5
+gamma = 1/4  # Four days
 a=0.9;sigma=1
 q=0.5
 delta1=1/4
@@ -86,7 +86,6 @@ r[1,] = rnorm(B,0,sigma/sqrt(1-a^2))        # Prior for log(beta/gamma) at first
 #print(x[1,,])
 for(s in 2:n2)
 {
- print(s)
  r[s,] = a*r[s-1,]+rnorm(B,0,sigma)
  beta = gamma*exp(r[s,])
  #x[s,,] = simSIR(x[s-1,,],beta,gamma,h=0.000001,npop)
