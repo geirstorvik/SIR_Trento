@@ -1,4 +1,4 @@
----
+Algi---
 title: "SMC_AR"
 author: "Geir Storvik"
 date: "2025-05-15"
@@ -42,25 +42,27 @@ ggplot(data=df,aes(x=date)) + geom_line(aes(y=x)) + geom_point(aes(y=y))
 ```{r SMC,echo=FALSE}
 SMC = function(y,B,a=0.9,sigma.x=0.5,sigma.y=0.3)
 {
- nt = length(y)
+ nT = length(y)
  xsim = matrix(nrow=nT,ncol=B)
  #initialization
  xsim[1,] = rnorm(B,0,sigma.x/sqrt(1-a^2))
  w = dnorm(y[1],xsim[1,],sigma.y)
  loglik = log(mean(w))
+ # Resample
+ ind = sample(1:B,B,prob=w,replace=T)
+ xsim[1,] = xsim[1,ind]
  for(i in 2:nT)
  {
-  # Resample
-  ind = sample(1:B,B,prob=w,replace=T)
-  xsim[1:(i-1),] = xsim[1:(i-1),ind]
+  flush.console()
+  cat(sprintf("\r%d", i))
   #Proposals
   xsim[i,] = rnorm(B,a*xsim[i-1,],sigma.x)
   w = dnorm(y[i],xsim[i,],sigma.y)
   loglik = loglik + log(mean(w))
+  # Resample
+  ind = sample(1:B,B,prob=w,replace=T)
+  xsim[1:i,] = xsim[1:i,ind]
  }
- #Resample last time-point
- ind = sample(1:B,B,prob=w,replace=T)
- xsim = xsim[,ind]
  return(list(xsim=xsim,loglik=loglik))
 }
 res = SMC(y,B=10000)
