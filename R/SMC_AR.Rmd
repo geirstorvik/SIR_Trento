@@ -20,7 +20,8 @@ $$
 ### Simulate data
 
 ```{r sim,echo=FALSE}
-a=0.9;sigma.x = 0.5;sigma.y=0.3
+set.seed(234)
+a=0.9;sigma.x = 0.25;sigma.y=0.3
 nT = 100
 x = rep(NA,nT)
 x[1] = rnorm(1,0,sigma.x/sqrt(1-a^2))
@@ -40,11 +41,11 @@ ggplot(data=df,aes(x=date)) + geom_line(aes(y=x)) + geom_point(aes(y=y))
 ### SMC assuming parameters are known
 
 ```{r SMC,echo=FALSE}
-SMC = function(y,B,a=0.9,sigma.x=0.5,sigma.y=0.3)
+SMC = function(y,B,a=0.9,sigma.x=0.5,sigma.y=0.3,pr=FALSE)
 {
  nT = length(y)
  xsim = matrix(nrow=nT,ncol=B)
- #initialization
+ #Proposal at time 1
  xsim[1,] = rnorm(B,0,sigma.x/sqrt(1-a^2))
  w = dnorm(y[1],xsim[1,],sigma.y)
  loglik = log(mean(w))
@@ -53,26 +54,30 @@ SMC = function(y,B,a=0.9,sigma.x=0.5,sigma.y=0.3)
  xsim[1,] = xsim[1,ind]
  for(i in 2:nT)
  {
-  flush.console()
-  cat(sprintf("\r%d", i))
+   if(pr)
+   {
+    flush.console()
+    cat(sprintf("\r%d", i))
+   }
   #Proposals
   xsim[i,] = rnorm(B,a*xsim[i-1,],sigma.x)
   w = dnorm(y[i],xsim[i,],sigma.y)
   loglik = loglik + log(mean(w))
   # Resample
   ind = sample(1:B,B,prob=w,replace=T)
-  xsim[1:i,] = xsim[1:i,ind]
+  xsim[i,] = xsim[i,ind]
  }
  return(list(xsim=xsim,loglik=loglik))
 }
 res = SMC(y,B=10000)
-xsim = res$xsim
+xfilt = res$xsim
 ```
 
 ### Plotting results
 
 ```{r SMCplot}
-xsum = apply(xsim,1,quantile,probs=c(0.025,0.5,0.975))
+library(ggplot2)
+xsum = apply(xfilt,1,quantile,probs=c(0.025,0.5,0.975))
 dfplot = data.frame(date=1:nT,xmed=xsum[2,],xq1=xsum[1,],xq3=xsum[3,],xtrue=x)
 ggplot(data=dfplot,aes(x=date)) + geom_line(aes(y=xmed)) + geom_line(aes(y=xq1),linetype="dashed") + geom_line(aes(y=xq3),linetype="dashed")+ geom_point(aes(y=xtrue),color="red")
 ```
@@ -92,6 +97,7 @@ Using log-transforms on variances and logit-transform on a
 
 ```{r pmcmc, echo=FALSE}
 M=1000
+B = 1000
 atrans = function(rho){(exp(rho)-1)/(exp(rho)+1)}
 parsim = matrix(nrow=M,ncol=3)
 logliksim = rep(NA,M)
@@ -100,13 +106,15 @@ rho = 0
 logsigx = 0
 logsigy = 0
 
-loglik = SMC(y,B=100,a=atrans(parsim[1,1]),
+loglik = SMC(y,B=B,a=atrans(parsim[1,1]),
              sigma.x=exp(parsim[1,2]),sigma.y=exp(parsim[1,3]))$loglik
 logliksim[1] = loglik
 for(m in 2:M)
 {
+  flush.console()
+  cat(sprintf("\r%d", m))
  parprop = parsim[m-1,] + rnorm(3,0,0.1)
- loglikprop = SMC(y,B=100,a=atrans(parprop[1]),
+ loglikprop = SMC(y,B=B,a=atrans(parprop[1]),
              sigma.x=exp(parprop[2]),sigma.y=exp(parprop[3]))$loglik
  r = loglikprop-loglik
  if(runif(1)<exp(r))
@@ -129,5 +137,131 @@ plot.ts(sigmasim.x);abline(h=sigma.x,lty=2)
 sigmasim.y = exp(parsim[,3])
 plot.ts(sigmasim.y);abline(h=sigma.y,lty=2)
 #plot.ts(cbind(asim,sigmasim.x,sigmasim.y))
+pairs(cbind(asim,sigmasim.x,sigmasim.y)[-c(1:100),])
 ```
 
+### Smoothing - simplest version
+
+```{r SMCsmo}
+SMCsmo = function(y,B,a=0.9,sigma.x=0.5,sigma.y=0.3,pr=FALSE)
+{
+ nT = length(y)
+ xsim = matrix(nrow=nT,ncol=B)
+ #Proposal at time 1
+ xsim[1,] = rnorm(B,0,sigma.x/sqrt(1-a^2))
+ w = dnorm(y[1],xsim[1,],sigma.y)
+ loglik = log(mean(w))
+ # Resample
+ ind = sample(1:B,B,prob=w,replace=T)
+ xsim[1,] = xsim[1,ind]
+ for(i in 2:nT)
+ {
+   if(pr)
+   {
+    flush.console()
+    cat(sprintf("\r%d", i))
+   }
+  #Proposals
+  xsim[i,] = rnorm(B,a*xsim[i-1,],sigma.x)
+  w = dnorm(y[i],xsim[i,],sigma.y)
+  loglik = loglik + log(mean(w))
+  # Resample
+  ind = sample(1:B,B,prob=w,replace=T)
+  xsim[1:i,] = xsim[1:i,ind]                    #Change for smoothing!!!
+ }
+ return(list(xsim=xsim,loglik=loglik))
+}
+ressmo = SMCsmo(y,B=10000)
+xsimsmo = ressmo$xsim
+```
+
+### Plotting results
+
+```{r SMCplot}
+library(ggplot2)
+xsum = apply(xsimsmo,1,quantile,probs=c(0.025,0.5,0.975))
+dfplot = data.frame(date=1:nT,xmed=xsum[2,],xq1=xsum[1,],xq3=xsum[3,],xtrue=x)
+ggplot(data=dfplot,aes(x=date)) + geom_line(aes(y=xmed)) + geom_line(aes(y=xq1),linetype="dashed") + geom_line(aes(y=xq3),linetype="dashed")+ geom_point(aes(y=xtrue),color="red")
+```
+
+###Comparing filter and smoothing for a specific point
+
+```{r density}
+t = 10
+dfplot = data.frame(xfilt = xfilt[t,],xsmo=xsimsmo[t,])
+ggplot(dfplot)+geom_density(aes(x=xfilt)) + geom_density(aes(x=xsmo),color="red")
+```
+
+### Unique numbers
+```{r}
+uniq = matrix(nrow=nT,ncol=2)
+for(i in 1:nT)
+{ 
+  uniq[i,1] = length(unique(xfilt[i,]))
+  uniq[i,2] = length(unique(xsimsmo[i,]))
+}
+matplot(uniq,type="l")
+```
+
+### Backwards sampling
+
+```{r backwards}
+SMCback = function(y,B,a=0.9,sigma.x=0.5,sigma.y=0.3,pr=FALSE)
+{
+ nT = length(y)
+ xsim0 = matrix(nrow=nT,ncol=B)
+ xsim = matrix(nrow=nT,ncol=B)
+ wsim = matrix(nrow=nT,ncol=B)
+ #Proposal at time 1
+ xsim[1,] = rnorm(B,0,sigma.x/sqrt(1-a^2))
+ xsim0[1,] = xsim[1,]   #Store before resampling
+ w = dnorm(y[1],xsim[1,],sigma.y)
+ wsim[1,] = w
+ loglik = log(mean(w))
+ # Resample
+ ind = sample(1:B,B,prob=w,replace=T)
+ xsim[1,] = xsim[1,ind]
+ for(i in 2:nT)
+ {
+   if(pr)
+   {
+    flush.console()
+    cat(sprintf("\r%d", i))
+   }
+  #Proposals
+  xsim[i,] = rnorm(B,a*xsim[i-1,],sigma.x)
+  w = dnorm(y[i],xsim[i,],sigma.y)
+  xsim0[i,] = xsim[i,]   #Store before resampling
+  wsim[i,] = w
+  loglik = loglik + log(mean(w))
+  # Resample
+  ind = sample(1:B,B,prob=w,replace=T)
+  xsim[i,] = xsim[i,ind]
+ }
+ xback = xsim
+ xback[nT,] = xsim[nT,]
+ #Backwards sampling
+ for(i in (nT-1):1)
+ for(b in 1:B)
+ {
+   ind = sample(1:B,1,prob=wsim[i,]*dnorm(xback[i+1,b],a*xsim0[i,],sigma.x),replace=T)
+   #print(ind)
+   xback[i,b] = xsim0[i,ind]
+ }
+ return(list(xsim=xback,loglik=loglik))
+}
+resback = SMCback(y,B=1000)
+xback = resback$xsim
+```
+
+### Unique numbers
+```{r}
+uniq = matrix(nrow=nT,ncol=3)
+for(i in 1:nT)
+{ 
+  uniq[i,1] = length(unique(xfilt[i,]))
+  uniq[i,2] = length(unique(xsimsmo[i,]))
+  uniq[i,3] = length(unique(xback[i,]))
+}
+matplot(uniq,type="l")
+```
