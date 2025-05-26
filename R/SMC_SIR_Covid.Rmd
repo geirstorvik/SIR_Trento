@@ -16,14 +16,19 @@ Notebook for performing sequential Monte Carlo on SIR model
 ### Incidence data
 
 
-```{r cars}
+```{r data}
 library(data.table)
 library(ggplot2)
 #x = read.csv("data_covid19_lab_by_time_latest.csv")
 df = read.table("../data/Data_Norway.txt",header=T)
 df$date = as.Date(df$date)
 df$seed[is.na(df$seed)] = 0
-n = nrow(df)
+N = nrow(df)
+
+#Reducing data to first n time-points
+n = 300
+df = df[1:n,]
+
 #Plot hospital data
 ggplot(data=df,aes(x=date,y=nhosp)) + geom_line()
 ```
@@ -31,71 +36,89 @@ ggplot(data=df,aes(x=date,y=nhosp)) + geom_line()
 
 
 ### SMC
-We now want to perform sequential Monte Carlo. We consider the model
+We now want to perform sequential Monte Carlo. We consider an AR-model for $r_t=\log R_t$ with $R_t=\beta_t/\gamma$:
 $$
-a=b
+r_t=ar_{t-1}+N(0,\sigma^2)
 $$
+Some common parameter settings
 
-```{r SMC,echo=FALSE}
+```{r param}
 #Population size
 npop = 5400000
-gamma = 0.33
+#Days with infection: 3
+gamma = 1/3
+#Parameters in AR-model for r_t
 a=0.95;sigma=0.1
+#Probabilities for hospitalization, delay until hospitalization
 hosp_prob=0.02;delayHosp=14
-q=0.5*hosp_prob
-delta1=1/4
+qHosp=0.5*hosp_prob
+#Probabilities for being tested
+qTest=0.5;delayTest=4
+#Delta_t
+H = 4
+delta1=1/H
 #Number of particles
-B = 100000
+B = 50000
+#Upper limit in prior for S(0)
+S0max = 2000
+#S0max = npop
+##Amplificaton factor for seeding (from abroad)
+Amp = 2.8
+```
+
+### First using only hospital data
+
+```{r SMCHosp,echo=FALSE}
+
 #Initialization
 x = array(NA,c(n,B,2)) #2 states: S and I
 r = matrix(nrow=n,ncol=B)
-x[1,,2] = sample(0:200,B,replace=TRUE)     # Prior for number of infected at start
+x[1,,2] = sample(0:S0max,B,replace=TRUE)     # Prior for number of infected at start
 x[1,,1] = npop-x[1,,2]         # Assume no one in R group in the beginning
 
 r[1,] = rnorm(B,0,sigma/sqrt(1-a^2))# Prior for log(beta/gamma) at first time point
-#print(x[1,,])
 for(s in 2:n)
 {
-  flush.console()
-  cat(sprintf("\r%d", s))
-  #print(s)
   r[s,] = a*r[s-1,]+rnorm(B,0,sigma)
   beta = gamma*exp(r[s,])
   Inew_daily=0
-  for (h in 1:4){ #every 6 hours
+  for (h in 1:H){ #number of simulations within day
     rate = delta1*beta*(x[s-1,,2])/npop
     Inew = rbinom(B,x[s-1,,1],1-exp(-rate))
+    Bnew = df$seed[s] + rpois(B,df$seed[s]*(Amp-1))
     Inew_daily=Inew_daily+Inew
     Rnew = rbinom(B,x[s-1,,2],delta1*gamma)
-    #print(c(df2$npos[2],range(Inew)))
-    x[s,,1] = x[s-1,,1]-Inew
-    x[s,,2] = x[s-1,,2]+Inew-Rnew
-    #print(x[s,,])
+    x[s,,1] = x[s-1,,1]-Inew-Bnew
+    x[s,,2] = x[s-1,,2]+Inew+Bnew-Rnew
   }
   if(s<=(n-delayHosp))
-    w = dbinom(df$nhosp[s+delayHosp],Inew_daily,q)
-  #print("w")
-  #print(range(w))
+    w = dbinom(df$nhosp[s+delayHosp],Inew_daily,qHosp)
   ind = sample(1:B,B,replace=TRUE,prob=w)
-  #print(length(unique(ind)))
   l = max(1,s-10)
   x[l:s,,] = x[l:s,ind,]
   r[l:s,] = r[l:s,ind]
-}
+  flush.console()
+  cat(sprintf("\rTime:%d Num unique:%d", s,length(unique(ind))))
+  }
+#Store results
 rhosp = r
 xhosp = x
 ```
 
+### Plotting numer of indidences
 
 ```{r plotSMC,echo=FALSE}
-xsum = apply(x[,,2],1,quantile,probs=c(0.025,0.5,0.975))
+xsum = apply(xhosp[,,2],1,quantile,probs=c(0.025,0.5,0.975))
 dfplot = data.frame(date=df$date,I=xsum[2,],Iq1=xsum[1,],Iq3=xsum[3,])
 ggplot(data=dfplot,aes(x=date))+geom_line(aes(y=I))+geom_line(aes(y=Iq1),linetype="dashed")+geom_line(aes(y=Iq3),linetype="dashed")
 #dfplot = data.frame(date=df2$date,I=xsum[2,])
 #ggplot(data=dfplot,aes(x=date,y=I)) + geom_line()
 ```
+
+### Plotting reproduction number R_t
+
 ```{r}
-rsum = apply(r,1,quantile,probs=c(0.025,0.5,0.975))
+rsum = apply(rhosp,1,quantile,probs=c(0.025,0.5,0.975))
 Rsum = exp(rsum)
 
 dfplot = data.frame(date=df$date,R=Rsum[2,],Rq1=Rsum[1,],Rq3=Rsum[3,])
@@ -105,72 +128,55 @@ ggplot(data=dfplot,aes(x=date)) + geom_line(aes(y=R)) + geom_line(aes(y=Rq1),lin
 Now including test data
 
 
-```{r}
-#Population size
-npop = 5400000
-gamma = 0.33
-a=0.95;sigma=0.1
-hosp_prob=0.02;delayHosp=14
-delayTest=7
-q=0.5*hosp_prob
-delta1=1/4
-#Number of particles
-B = 100000
+```{r SMCComb}
 #Initialization
 x = array(NA,c(n,B,2)) #2 states: S and I
 r = matrix(nrow=n,ncol=B)
-x[1,,2] = sample(0:200,B,replace=TRUE)     # Prior for number of infected at start
+#x[1,,2] = sample(0:200,B,replace=TRUE)     # Prior for number of infected at start
+x[1,,2] = sample(0:S0max,B,replace=TRUE)     # Prior for number of infected at start
 x[1,,1] = npop-x[1,,2]         # Assume no one in R group in the beginning
 
 r[1,] = rnorm(B,0,sigma/sqrt(1-a^2))# Prior for log(beta/gamma) at first time point
 #print(x[1,,])
 for(s in 2:n)
 {
-  flush.console()
-  cat(sprintf("\r%d", s))
-  #print(s)
   r[s,] = a*r[s-1,]+rnorm(B,0,sigma)
   beta = gamma*exp(r[s,])
   Inew_daily=0
-  for (h in 1:4){ #every 6 hours
+  for (h in 1:H){ #number of simulations within day
     rate = delta1*beta*(x[s-1,,2])/npop
     Inew = rbinom(B,x[s-1,,1],1-exp(-rate))
+    Bnew = df$seed[s] + rpois(B,df$seed[s]*(Amp-1))
     Inew_daily=Inew_daily+Inew
     Rnew = rbinom(B,x[s-1,,2],delta1*gamma)
-    #print(c(df2$npos[2],range(Inew)))
-    x[s,,1] = x[s-1,,1]-Inew
-    x[s,,2] = x[s-1,,2]+Inew-Rnew
-    #print(x[s,,])
+    x[s,,1] = x[s-1,,1]-Inew-Bnew
+    x[s,,2] = x[s-1,,2]+Inew+Bnew-Rnew
   }
   if(s<=(n-delayHosp))
-    w = dbinom(df$nhosp[s+delayHosp],Inew_daily,q)
+    w = dbinom(df$nhosp[s+delayHosp],Inew_daily,qHosp)
   if(s<=(n-delayTest) & !is.na(df$npos[s+delayTest]))
-    w = w * dbinom(df$npos[s+delayTest],Inew_daily,0.5)
-  #print("w")
-  #print(range(w))
+    w = w * dbinom(df$npos[s+delayTest],Inew_daily,qTest)
   ind = sample(1:B,B,replace=TRUE,prob=w)
-  #print(length(unique(ind)))
   l = max(1,s-10)
   x[l:s,,] = x[l:s,ind,]
   r[l:s,] = r[l:s,ind]
+  flush.console()
+  cat(sprintf("\rTime:%d Num unique:%d", s,length(unique(ind))))
 }
 rcomb = r
 xcomb = x
 ```
 
 ```{r}
-rsum2 = apply(r,1,quantile,probs=c(0.025,0.5,0.975))
+rsum2 = apply(rcomb,1,quantile,probs=c(0.025,0.5,0.975))
 Rsum2 = exp(rsum2)
 
+colors = c("Hospital data"="black","Hospital+Test"="red")
 dfplot = data.frame(date=df$date,R=Rsum[2,],Rq1=Rsum[1,],Rq3=Rsum[3,],
                     R2=Rsum2[2,],R2q1=Rsum2[1,],R2q3=Rsum2[3,])
 ggplot(data=dfplot,aes(x=date)) + geom_line(aes(y=R)) + geom_line(aes(y=Rq1),linetype="dashed") + geom_line(aes(y=Rq3),linetype="dashed") +
-  geom_line(aes(y=R2,color="red")) + geom_line(aes(y=R2q1),linetype="dashed",color="red") + geom_line(aes(y=R2q3),linetype="dashed",color="red")
+  geom_line(aes(y=R2),color="red") + geom_line(aes(y=R2q1),linetype="dashed",color="red") + geom_line(aes(y=R2q3),linetype="dashed",color="red") + labs(x="Date",y="R",color="Legend") +ylim(0,3)
 ```
 
-```{r}
-dfplot2 = dfplot[200:300,]
-ggplot(data=dfplot2,aes(x=date)) + geom_line(aes(y=R)) + geom_line(aes(y=Rq1),linetype="dashed") + geom_line(aes(y=Rq3),linetype="dashed") +
-  geom_line(aes(y=R2,color="red")) + geom_line(aes(y=R2q1),linetype="dashed",color="red") + geom_line(aes(y=R2q3),linetype="dashed",color="red")
-```
+
 
