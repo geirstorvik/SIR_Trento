@@ -177,7 +177,7 @@ xsimsmo = ressmo$xsim
 
 ### Plotting results
 
-```{r SMCplot}
+```{r SMCplot2}
 library(ggplot2)
 xsum = apply(xsimsmo,1,quantile,probs=c(0.025,0.5,0.975))
 dfplot = data.frame(date=1:nT,xmed=xsum[2,],xq1=xsum[1,],xq3=xsum[3,],xtrue=x)
